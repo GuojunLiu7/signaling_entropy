@@ -1,0 +1,413 @@
+setwd("E:\\multi\\COAD")
+rm(list=ls())
+
+library(dplyr)
+library(tidyr)
+library(tidyverse)
+library(summarytools)
+library(edgeR)
+library(limma)
+
+
+
+coad_exp <- read.csv("mRNA_exprSet.csv",header = T)
+colnames(coad_exp)
+
+
+
+
+
+metadata <- data.frame(colnames(coad_exp))
+for (i in 2:length(metadata[,1])) {
+  num <- as.numeric(substring(metadata[i,1],14,15))
+  if (num %in% seq(1,9)) {metadata[i,2] <- "T"}
+  if (num %in% seq(10,29)) {metadata[i,2] <- "N"}
+}
+names(metadata) <- c("id","group")
+metadata$group <- as.factor(metadata$group)
+
+
+table(metadata$group)
+
+metadata <- subset(metadata, metadata$group == "T")
+
+
+index <- duplicated(coad_exp$gene_name)
+coad_exp <- coad_exp[!index,]
+dim(coad_exp)
+
+row.names(coad_exp) <- coad_exp$gene_name
+coad_exp$gene_name <- NULL
+
+coad_exp <- coad_exp[,which(colnames(coad_exp) %in% metadata$id)]
+
+
+
+
+exprSet <- coad_exp[rowSums(cpm(coad_exp) > 1) >= 2,]
+
+exprSet <- exprSet[,order(names(exprSet))] # 接受重新排列的列名将列排序
+
+
+
+
+metadata <- data.frame(colnames(exprSet))
+write.csv(metadata,file="metadata.csv")
+
+
+
+
+
+
+
+
+
+metadata <- read.csv("metadata.csv",header = T)
+group_list = factor(metadata$REC,levels=c('non','rec'))
+
+
+
+design <- model.matrix(~group_list)
+exprSet <- DGEList(counts = exprSet, group = group_list)
+exprSet <- calcNormFactors(exprSet)
+
+
+exprSet <- estimateCommonDisp(exprSet)
+exprSet <- estimateTagwiseDisp(exprSet)
+et <- exactTest(exprSet,pair = c('non','rec'))
+ordered_tags <- topTags(et,n=100000)
+
+allDiff <- ordered_tags$table
+allDiff <- allDiff[is.na(allDiff$FDR)==FALSE,]
+diff <- allDiff
+newData <- exprSet$pseudo.counts
+
+write.csv(diff,file="edgerOut.csv")
+foldChange=1
+padj=0.05
+diffSig <- diff[(diff$FDR < padj & (diff$logFC > foldChange | diff$logFC < (-foldChange))),]
+write.csv(diffSig,file="diffSig.csv")
+diffUp <- diff[(diff$FDR < padj & (diff$logFC > foldChange)),]
+write.csv(diffUp,file="up.csv")
+diffDown <- diff[(diff$FDR < padj & (diff$logFC < (-foldChange))),]
+
+normalizeExp <- rbind(id=colnames(newData),newData)
+diffExp <- rbind(id=colnames(newData),newData[rownames(diffSig),])
+diffExp <- rbind(id=colnames(newData),newData[rownames(diffSig),])
+write.table(diffExp,file="diffmRNAExp.txt",sep="\t",quote=F,col.names=F)
+min(diffExp)
+max(diffExp)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+========================================================================
+  
+  
+  
+  
+rm(list=ls())
+library(dplyr)
+library(tidyr)
+df <- read.table("diffmRNAExp.txt",header = T,row.names = 1)
+
+df <- t(df)
+
+
+
+
+library(Hmisc)
+up_CorMatrix <- function(cor,p) {ut <- upper.tri(cor) 
+data.frame(row = rownames(cor)[row(cor)[ut]] ,
+           column = rownames(cor)[col(cor)[ut]], 
+           cor =(cor)[ut], 
+           p = p[ut] ) }
+
+res <- rcorr(as.matrix(df))
+gene_cor_up <- up_CorMatrix (res$r, res$P)
+
+low_CorMatrix <- function(cor,p) {ut <- lower.tri(cor,diag=T) 
+data.frame(row = rownames(cor)[row(cor)[ut]] ,
+           column = rownames(cor)[col(cor)[ut]], 
+           cor =(cor)[ut], 
+           p = p[ut] ) }
+
+res <- rcorr(as.matrix(df))
+gene_cor_low <- low_CorMatrix (res$r, res$P)
+
+gene_cor_low <- gene_cor_low %>% 
+  mutate_if(
+    function(x) any(is.na(x)),
+    funs(replace_na),
+    replace = 0
+  )
+
+
+gene_cor <- rbind(gene_cor_up,gene_cor_low)
+
+gene_cor <- subset(gene_cor, select = c(row,column))
+
+string <- read.csv("string.csv",header = T)
+
+
+gene1 <- read.csv("gene1.csv",header = T)
+string <- merge(string,gene1,by="gene1")
+string <- subset(string,select = c(id1,gene2,correlation))
+gene2 <- read.csv("gene2.csv",header = T)
+string <- merge(string,gene2,by="gene2")
+string <- subset(string , select = c(id1,id2,correlation))
+
+
+
+library(dplyr)
+library(tidyr)
+gene_cor <- gene_cor %>%
+  tidyr::unite(gene,row,column,sep="|")
+string <- string %>%
+  tidyr::unite(gene,id1,id2,sep="|")
+
+gene_cor_new <- left_join(gene_cor, string, by = "gene")
+
+
+gene_cor_new <- gene_cor_new %>% 
+  mutate_if(
+    function(x) any(is.na(x)),
+    funs(replace_na),
+    replace = 0
+  )
+
+table(gene_cor_new$cor)
+
+gene_core <- subset(gene_cor_new, select = c(gene,correlation))
+
+
+gene_core   <- gene_core   %>%
+  tidyr::separate(gene,c("gene1","gene2"),sep='\\|')
+
+
+
+a <- gene_core
+
+
+
+
+a$gene1 <- as.factor(a$gene1)
+a$gene2 <- as.factor(a$gene2)
+a_val <- a[a$correlation == 1,]
+gc <- as.matrix(table(a_val$gene1,a_val$gene2))
+
+
+write.csv(gc,file="gc.csv")
+
+
+
+===========================================
+  
+  
+  
+rm(list=ls())  
+source("DoIntegPIN.R");
+
+avdataSCM2.m <-  read.table("diffmRNAExp.txt",header = T,row.names = 1)
+str(avdataSCM2.m)
+avdataSCM2.m <- log(avdataSCM2.m +1)
+
+
+avdataSCM2.m <- t(scale(t(avdataSCM2.m)))+5
+min(avdataSCM2.m)
+max(avdataSCM2.m)
+fix(avdataSCM2.m)
+
+gc <- read.csv("gc.csv",header = T , row.names = 1)
+hprdAsigH.m <- as.matrix(gc)
+
+
+colnames(gc) <- gsub("X","",colnames(gc))
+pin.o <- DoIntegPIN(hprdAsigH.m,avdataSCM2.m);
+print(dim(pin.o$a));
+
+
+colnames(pin.o$a) <- gsub("X","",colnames(pin.o$a))
+
+
+source("CompSR.R");
+maxSR <- CompMaxSR(pin.o$a);
+print(maxSR);
+
+
+
+
+selS.idx = c(1:454)
+tmpE.m <- pin.o$e[,selS.idx];
+
+sr.lo <- list();
+k.v <- rowSums(pin.o$a);
+for(s in 1:ncol(tmpE.m)){
+  sr.lo[[s]] <- CompSR(tmpE.m[,s],
+                       pin.o$a,k.v,
+                       local=TRUE,
+                       method=1,
+                       maxSR=maxSR);
+  print(s)}
+
+
+
+
+
+
+sr.v <- vector();
+for(s in 1:length(sr.lo)){
+  sr.v[s] <- sr.lo[[s]]$sr;
+}
+sr.v <- as.data.frame(sr.v)
+sr.v$sample <- colnames(tmpE.m)
+names(sr.v)[1] <- 'entr'
+write.csv(sr.v,file="sr.v.csv")
+
+
+entr <- read.csv('sr.v.csv',header = T)
+t.test(entr~REC,data = entr)
+
+pdf("entr.pdf" ,width = 4,height = 4)
+library(ggpubr)
+p <- ggboxplot(entr, x="REC", y="entr", color = "REC", ylim = c(0.75,0.82))
+p <- p+stat_compare_means(method = "t.test")
+p
+dev.off()
+
+
+
+
+
+
+
+srneq2.v <- vector();
+for(s in 1:length(sr.lo)){
+  srneq2.v[s] <- mean(sr.lo[[s]]$ns);
+}
+srneq2.v 
+
+
+srneq2.v  <- as.data.frame(srneq2.v )
+srneq2.v $sample <- colnames(tmpE.m)
+names(srneq2.v)[1] <- 'entr'
+write.csv(srneq2.v,file="srneq2.v.csv")
+
+
+entr <- read.csv('srneq2.v.csv',header = T)
+min(entr$entr)
+max(entr$entr)
+t.test(entr~REC,data = entr)
+
+
+
+pdf("entr_mean.pdf" ,width = 4,height = 4)
+library(ggpubr)
+p <- ggboxplot(entr, x="REC", y="entr", color = "REC", ylim = c(0.820,0.825))
+p <- p+stat_compare_means(method = "t.test")
+p
+dev.off()
+
+
+
+
+
+
+
+
+=========================================================================
+  
+  
+  
+  
+  
+  
+  =========================================================================  
+  
+  
+  
+  
+library(survminer)
+require("survival")
+
+rt <- read.csv("sr.sur.csv",header = T)
+
+rt$entr  <- ifelse(rt$entr > median(rt[,"entr"]),
+                   "high","low")
+rt$status <- ifelse(rt$status == "Dead",1,0)
+
+fit <- survfit(Surv(time, status) ~ entr, data = rt)
+
+pdf("entrop_sur.pdf",height = 4,width = 4)
+ggsurv <- ggsurvplot(fit, data = rt,
+                     pval = T,
+                     xlim = c(0,2000),  
+                     break.time.by = 500,  
+                     xlab = "Time in days")
+
+ggsurv <- ggpar( ggsurv,
+                 font.y  = c(16, "bold"), 
+                 font.x  = c(16, "bold"),
+                 legend = "top",
+                 font.legend = c(16, "bold"))
+
+ggsurv
+dev.off()
+
+
+
+
+
+
+
+
+
+
+library(survminer)
+require("survival")
+
+rt <- read.csv("mean_sur.csv",header = T)
+
+rt$entr  <- ifelse(rt$entr > median(rt[,"entr"]),
+                   "high","low")
+rt$status <- ifelse(rt$status == "Dead",1,0)
+
+fit <- survfit(Surv(time, status) ~ entr, data = rt)
+
+pdf("entrop_sur_mean.pdf",height = 4,width = 4)
+ggsurv <- ggsurvplot(fit, data = rt,
+                     pval = T,
+                     xlim = c(0,2000),  
+                     break.time.by = 365,  
+                     xlab = "Time in days")
+
+ggsurv <- ggpar( ggsurv,
+                 font.y  = c(16, "bold"), 
+                 font.x  = c(16, "bold"),
+                 legend = "top",
+                 font.legend = c(16, "bold"))
+
+ggsurv
+dev.off()
+
+
+
+
+
+
